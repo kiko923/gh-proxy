@@ -32,11 +32,21 @@ const exp6 = /^(?:https?:\/\/)?github\.com\/.+?\/.+?\/tags.*$/i
 
 function makeRes(body, status = 200, headers = {}) {
   headers['access-control-allow-origin'] = '*'
+  if (!headers['content-type']) headers['content-type'] = 'text/plain; charset=utf-8'
   return new Response(body, { status, headers })
 }
 
 function newUrl(urlStr) {
   try { return new URL(urlStr) } catch { return null }
+}
+
+/** 拦截 404：返回纯文本，而不是上游的 HTML 页面 */
+async function fetchPlain404(input, init) {
+  const res = await fetch(input, init)
+  if (res.status === 404) {
+    return makeRes('404 Not Found', 404)
+  }
+  return res
 }
 
 addEventListener('fetch', (e) => {
@@ -86,7 +96,8 @@ async function fetchHandler(e) {
       return httpHandler(req, path)
     }
   } else {
-    return fetch(ASSET_URL + path)
+    // 静态资源（GitHub Pages）同样拦截 404，避免返回其 HTML
+    return fetchPlain404(ASSET_URL + path, { redirect: 'follow' })
   }
 }
 
@@ -139,9 +150,15 @@ async function proxy(urlObj, reqInit) {
   if (!urlObj) return makeRes('Bad upstream url', 502)
 
   const res = await fetch(urlObj.href, reqInit)
+  const status = res.status
+
+  // ★ 先拦截 404，直接纯文本返回（避免返回 GitHub/Gist/raw/GitHub Pages 的 404 HTML）
+  if (status === 404) {
+    return makeRes('404 Not Found', 404)
+  }
+
   const resHdrOld = res.headers
   const resHdrNew = new Headers(resHdrOld)
-  const status = res.status
 
   // 处理 Location（支持相对地址）
   if (resHdrNew.has('location')) {
